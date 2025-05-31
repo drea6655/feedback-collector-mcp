@@ -9,18 +9,27 @@ import argparse
 import subprocess
 import threading
 import hashlib
+import base64
+import mimetypes
 from typing import Optional, TypedDict
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QCheckBox, QTextEdit, QGroupBox
+    QLabel, QLineEdit, QPushButton, QCheckBox, QTextEdit, QGroupBox,
+    QFileDialog, QScrollArea, QGridLayout, QFrame
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer, QSettings
-from PySide6.QtGui import QTextCursor, QIcon, QKeyEvent, QFont, QFontDatabase, QPalette, QColor
+from PySide6.QtGui import QTextCursor, QIcon, QKeyEvent, QFont, QFontDatabase, QPalette, QColor, QPixmap
+
+class ImageData(TypedDict):
+    filename: str
+    data: str  # base64 encoded
+    mime_type: str
 
 class FeedbackResult(TypedDict):
     command_logs: str
     interactive_feedback: str
+    images: list[ImageData]
 
 class FeedbackConfig(TypedDict):
     run_command: str
@@ -218,6 +227,7 @@ class FeedbackUI(QMainWindow):
         self.process: Optional[subprocess.Popen] = None
         self.log_buffer = []
         self.feedback_result = None
+        self.uploaded_images: list[ImageData] = []
         self.log_signals = LogSignals()
         self.log_signals.append_log.connect(self._append_log)
 
@@ -370,10 +380,33 @@ class FeedbackUI(QMainWindow):
         self.feedback_text.setMinimumHeight(5 * row_height + padding)
 
         self.feedback_text.setPlaceholderText("Enter your feedback here (Ctrl+Enter to submit)")
+
+        # Images section
+        images_header_layout = QHBoxLayout()
+        images_label = QLabel("Images:")
+        self.upload_images_button = QPushButton("Add Images")
+        self.upload_images_button.clicked.connect(self._upload_images)
+        images_header_layout.addWidget(images_label)
+        images_header_layout.addWidget(self.upload_images_button)
+        images_header_layout.addStretch()
+
+        # Image preview area
+        self.images_scroll_area = QScrollArea()
+        self.images_scroll_area.setWidgetResizable(True)
+        self.images_scroll_area.setMaximumHeight(200)
+        self.images_scroll_area.setMinimumHeight(50)
+        self.images_scroll_area.setVisible(False)  # Hidden initially
+
+        self.images_container = QWidget()
+        self.images_layout = QGridLayout(self.images_container)
+        self.images_scroll_area.setWidget(self.images_container)
+
         submit_button = QPushButton("&Send Feedback (Ctrl+Enter)")
         submit_button.clicked.connect(self._submit_feedback)
 
         feedback_layout.addWidget(self.feedback_text)
+        feedback_layout.addLayout(images_header_layout)
+        feedback_layout.addWidget(self.images_scroll_area)
         feedback_layout.addWidget(submit_button)
 
         # Set minimum height for feedback_group to accommodate its contents
@@ -411,7 +444,7 @@ class FeedbackUI(QMainWindow):
         new_height = self.centralWidget().sizeHint().height()
         if self.command_group.isVisible() and self.command_group.layout().sizeHint().height() > 0 :
              # if command group became visible and has content, ensure enough height
-             min_content_height = self.command_group.layout().sizeHint().height() + self.feedback_group.minimumHeight() + self.toggle_command_button.height() + layout().spacing() * 2
+             min_content_height = self.command_group.layout().sizeHint().height() + self.feedback_group.minimumHeight() + self.toggle_command_button.height() + self.centralWidget().layout().spacing() * 2
              new_height = max(new_height, min_content_height)
 
         current_width = self.width()
@@ -496,10 +529,141 @@ class FeedbackUI(QMainWindow):
             self._append_log(f"Error running command: {str(e)}\n")
             self.run_button.setText("&Run")
 
+    def _upload_images(self):
+        """Open file dialog to select images"""
+        file_dialog = QFileDialog()
+        file_dialog.setFileMode(QFileDialog.ExistingFiles)
+        file_dialog.setNameFilter("Images (*.png *.jpg *.jpeg *.gif *.bmp)")
+
+        if file_dialog.exec():
+            file_paths = file_dialog.selectedFiles()
+            for file_path in file_paths:
+                self._add_image(file_path)
+
+    def _add_image(self, file_path: str):
+        """Add an image to the uploaded images list"""
+        try:
+            # Validate file size (limit to 5MB)
+            file_size = os.path.getsize(file_path)
+            if file_size > 5 * 1024 * 1024:  # 5MB
+                self._append_log(f"Image {os.path.basename(file_path)} is too large (max 5MB)\n")
+                return
+
+            # Limit number of images
+            if len(self.uploaded_images) >= 10:
+                self._append_log("Maximum of 10 images allowed\n")
+                return
+
+            # Get MIME type
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if not mime_type or not mime_type.startswith('image/'):
+                self._append_log(f"Invalid image format: {os.path.basename(file_path)}\n")
+                return
+
+            # Encode image to base64
+            base64_data = self._encode_image_to_base64(file_path)
+
+            # Create image data
+            image_data = ImageData(
+                filename=os.path.basename(file_path),
+                data=base64_data,
+                mime_type=mime_type
+            )
+
+            # Add to list
+            self.uploaded_images.append(image_data)
+
+            # Update UI
+            self._update_images_display()
+            self._append_log(f"Added image: {os.path.basename(file_path)}\n")
+
+        except Exception as e:
+            self._append_log(f"Error adding image {os.path.basename(file_path)}: {str(e)}\n")
+
+    def _encode_image_to_base64(self, file_path: str) -> str:
+        """Convert image file to base64 string"""
+        with open(file_path, 'rb') as image_file:
+            return base64.b64encode(image_file.read()).decode('utf-8')
+
+    def _remove_image(self, index: int):
+        """Remove an image from the uploaded images list"""
+        if 0 <= index < len(self.uploaded_images):
+            removed_image = self.uploaded_images.pop(index)
+            self._update_images_display()
+            self._append_log(f"Removed image: {removed_image['filename']}\n")
+
+    def _update_images_display(self):
+        """Update the images preview area"""
+        # Clear existing widgets
+        for i in reversed(range(self.images_layout.count())):
+            child = self.images_layout.itemAt(i).widget()
+            if child:
+                child.setParent(None)
+
+        # Show/hide scroll area based on whether we have images
+        has_images = len(self.uploaded_images) > 0
+        self.images_scroll_area.setVisible(has_images)
+
+        if not has_images:
+            return
+
+        # Add image preview widgets
+        for i, image_data in enumerate(self.uploaded_images):
+            preview_widget = self._create_image_preview_widget(image_data, i)
+            row = i // 3  # 3 images per row
+            col = i % 3
+            self.images_layout.addWidget(preview_widget, row, col)
+
+    def _create_image_preview_widget(self, image_data: ImageData, index: int) -> QWidget:
+        """Create a preview widget for an image"""
+        widget = QFrame()
+        widget.setFrameStyle(QFrame.Box)
+        widget.setMaximumSize(150, 180)
+        widget.setMinimumSize(150, 180)
+
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        # Create thumbnail
+        try:
+            # Decode base64 to create pixmap
+            image_bytes = base64.b64decode(image_data['data'])
+            pixmap = QPixmap()
+            pixmap.loadFromData(image_bytes)
+
+            # Scale to thumbnail size
+            thumbnail = pixmap.scaled(140, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+            image_label = QLabel()
+            image_label.setPixmap(thumbnail)
+            image_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(image_label)
+
+        except Exception as e:
+            # Fallback if thumbnail creation fails
+            error_label = QLabel("Preview\nError")
+            error_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(error_label)
+
+        # Filename label
+        filename_label = QLabel(image_data['filename'])
+        filename_label.setWordWrap(True)
+        filename_label.setAlignment(Qt.AlignCenter)
+        filename_label.setMaximumHeight(30)
+        layout.addWidget(filename_label)
+
+        # Remove button
+        remove_button = QPushButton("Remove")
+        remove_button.clicked.connect(lambda: self._remove_image(index))
+        layout.addWidget(remove_button)
+
+        return widget
+
     def _submit_feedback(self):
         self.feedback_result = FeedbackResult(
-            logs="".join(self.log_buffer),
+            command_logs="".join(self.log_buffer),
             interactive_feedback=self.feedback_text.toPlainText().strip(),
+            images=self.uploaded_images.copy()
         )
         self.close()
 
@@ -539,7 +703,7 @@ class FeedbackUI(QMainWindow):
             kill_tree(self.process)
 
         if not self.feedback_result:
-            return FeedbackResult(logs="".join(self.log_buffer), interactive_feedback="")
+            return FeedbackResult(command_logs="".join(self.log_buffer), interactive_feedback="", images=[])
 
         return self.feedback_result
 
@@ -576,6 +740,10 @@ if __name__ == "__main__":
 
     result = feedback_ui(args.project_directory, args.prompt, args.output_file)
     if result:
-        print(f"\nLogs collected: \n{result['logs']}")
+        print(f"\nLogs collected: \n{result['command_logs']}")
         print(f"\nFeedback received:\n{result['interactive_feedback']}")
+        if result['images']:
+            print(f"\nImages attached: {len(result['images'])}")
+            for img in result['images']:
+                print(f"  - {img['filename']} ({img['mime_type']})")
     sys.exit(0)
