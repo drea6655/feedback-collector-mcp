@@ -92,7 +92,7 @@ def convert_to_mcp_images(images_data: List[Dict[str, str]]) -> List[MCPImage]:
             binary_data = base64.b64decode(base64_data)
             
             # Create MCPImage object with binary data
-            result_images.append(MCPImage(data=binary_data, format='png'))
+            result_images.append(MCPImage(data=binary_data, format=format))
             
         except Exception as e:
             print(f"轉換圖片時出錯: {e}")
