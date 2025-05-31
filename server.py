@@ -133,4 +133,14 @@ def interactive_feedback(
     return feedback_items
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    # For testing, try running just the feedback UI directly
+    # try:
+    #     print("Testing feedback UI...")
+    #     test_result = launch_feedback_ui(os.getcwd(), "test")
+    #     print(test_result)
+    #     print("Feedback UI test successful")
+    # except Exception as e:
+    #     print(f"Error testing feedback UI: {e}")
+    
+    print("Starting MCP server...")
+    mcp.run()
