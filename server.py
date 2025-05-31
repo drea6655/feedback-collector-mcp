@@ -66,13 +66,13 @@ def first_line(text: str) -> str:
 
 def convert_to_mcp_images(images_data: List[Dict[str, str]]) -> List[MCPImage]:
     """
-    將圖片數據轉換為 MCPImage 對象列表
+    Convert image data to a list of MCPImage objects
     
     Args:
-        images_data: 包含圖片數據的字典列表
+        images_data: List of dictionaries containing image data
         
     Returns:
-        MCPImage 對象列表
+        List of MCPImage objects
     """
     result_images = []
     
@@ -95,7 +95,7 @@ def convert_to_mcp_images(images_data: List[Dict[str, str]]) -> List[MCPImage]:
             result_images.append(MCPImage(data=binary_data, format=format))
             
         except Exception as e:
-            print(f"轉換圖片時出錯: {e}")
+            print(f"Error converting image: {e}")
     
     return result_images
 
@@ -105,15 +105,15 @@ def interactive_feedback(
     summary: Annotated[str, Field(description="Short, one-line summary of the changes")],
 ) -> Dict[str, Any]:
     """
-    收集使用者回饋的互動式工具。AI 可以回報已完成的工作，使用者可以提供文字和圖片回饋。
+    Interactive tool for collecting user feedback. AI can report completed work, and users can provide text and image feedback.
     
     Args:
-        summary: AI 完成的工作內容回報。
+        summary: AI's report on the completed work.
         
     Returns:
-        使用者回饋內容或指示，使用者可以提供文字和圖片回饋，請你務必遵照指示執行。
+        User feedback content or instructions. Users can provide text and image feedback; please follow the instructions carefully.
     """
-    # 獲取用戶反饋
+    # Get user feedback
     result = launch_feedback_ui(first_line(project_directory), first_line(summary))
     
     feedback_items = []
@@ -124,7 +124,7 @@ def interactive_feedback(
         text=f"feedback_text：{result.get('interactive_feedback', '')}"
     ))
 
-    # 添加图片反馈
+    # Add image feedback
     if 'images' in result and result['images']:
         mcp_images = convert_to_mcp_images(result['images'])
         for image_data in mcp_images:
