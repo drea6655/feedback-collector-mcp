@@ -6,16 +6,19 @@ import sys
 import json
 import tempfile
 import subprocess
+import base64
 
-from typing import Annotated, Dict
+from typing import Annotated, Dict, List, Any, Optional
 
-from fastmcp import FastMCP
 from pydantic import Field
+
+from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.utilities.types import Image as MCPImage
 
 # The log_level is necessary for Cline to work: https://github.com/jlowin/fastmcp/issues/81
 mcp = FastMCP("Interactive Feedback MCP", log_level="ERROR")
 
-def launch_feedback_ui(project_directory: str, summary: str) -> dict[str, str]:
+def launch_feedback_ui(project_directory: str, summary: str) -> dict:
     # Create a temporary file for the feedback result
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         output_file = tmp.name
@@ -61,13 +64,73 @@ def launch_feedback_ui(project_directory: str, summary: str) -> dict[str, str]:
 def first_line(text: str) -> str:
     return text.split("\n")[0].strip()
 
+def convert_to_mcp_images(images_data: List[Dict[str, str]]) -> List[MCPImage]:
+    """
+    將圖片數據轉換為 MCPImage 對象列表
+    
+    Args:
+        images_data: 包含圖片數據的字典列表
+        
+    Returns:
+        MCPImage 對象列表
+    """
+    result_images = []
+    
+    for img_data in images_data:
+        try:
+            # Extract image data - this should be base64 encoded
+            base64_data = img_data.get('data', '')
+            mime_type = img_data.get('mime_type', 'image/png')
+            
+            if not base64_data:
+                continue
+                
+            # Get format from mime_type
+            format = mime_type.split('/')[-1] if '/' in mime_type else 'png'
+            
+            # Decode base64 to binary data before passing to MCPImage
+            binary_data = base64.b64decode(base64_data)
+            
+            # Create MCPImage object with binary data
+            result_images.append(MCPImage(data=binary_data, format='png'))
+            
+        except Exception as e:
+            print(f"轉換圖片時出錯: {e}")
+    
+    return result_images
+
 @mcp.tool()
 def interactive_feedback(
     project_directory: Annotated[str, Field(description="Full path to the project directory")],
     summary: Annotated[str, Field(description="Short, one-line summary of the changes")],
-) -> Dict[str, str]:
-    """Request interactive feedback for a given project directory and summary"""
-    return launch_feedback_ui(first_line(project_directory), first_line(summary))
+) -> Dict[str, Any]:
+    """
+    收集使用者回饋的互動式工具。AI 可以回報已完成的工作，使用者可以提供文字和圖片回饋。
+    
+    Args:
+        summary: AI 完成的工作內容回報。
+        
+    Returns:
+        使用者回饋內容或指示，使用者可以提供文字和圖片回饋，請你務必遵照指示執行。
+    """
+    # 獲取用戶反饋
+    result = launch_feedback_ui(first_line(project_directory), first_line(summary))
+    
+    feedback_items = []
+
+    from mcp.types import TextContent
+    feedback_items.append(TextContent(
+        type="text", 
+        text=f"feedback_text：{result.get('interactive_feedback', '')}"
+    ))
+
+    # 添加图片反馈
+    if 'images' in result and result['images']:
+        mcp_images = convert_to_mcp_images(result['images'])
+        for image_data in mcp_images:
+            feedback_items.append(image_data)
+        
+    return feedback_items
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
